@@ -209,9 +209,12 @@
     (setq cand (skk-comp-get-candidate 'first))
     (when cand
       (setq ret (list cand))
-      (while (setq cand (skk-comp-get-candidate))
-        (unless (member cand ret)
-          (setq ret (cons cand ret)))))
+      (let ((seen (make-hash-table :test 'equal)))
+        (puthash cand t seen)
+        (while (setq cand (skk-comp-get-candidate))
+          (unless (gethash cand seen)
+            (puthash cand t seen)
+            (setq ret (cons cand ret))))))
     (nreverse (if skk-katakana
                   (mapcar 'skk-hiragana-to-katakana ret)
                 ret))))
@@ -301,16 +304,15 @@
 
 ;;;###autoload
 (defun skk-comp-search-current-buffer (key &optional abbrev)
-  (let (c-word)
+  (let ((search-key (concat "\n"
+                            (if skk-use-numeric-conversion
+                                (skk-num-compute-henkan-key key)
+                              key)))
+        c-word)
     (save-match-data
       ;; `case-fold-search' は、辞書バッファでは常に nil。
       (while (and (not c-word)
-                  (search-forward
-                   (concat "\n"
-                           (if skk-use-numeric-conversion
-                               (skk-num-compute-henkan-key key)
-                             key))
-                   nil t))
+                  (search-forward search-key nil t))
         (unless (eq (following-char)
                     ?\040) ;SPC
           (setq c-word (concat key
@@ -329,20 +331,18 @@
 (defun skk-comp-re-search-current-buffer (key prefix &optional abbrev)
   ;; 問題のあるケースがあるかもしれないので
   ;; skk-comp-search-current-buffer との一本化はとりあえず保留
-  (let (c-word regexp-key)
-    (setq regexp-key (concat (regexp-quote
-                              (if skk-use-numeric-conversion
-                                  (skk-num-compute-henkan-key key)
-                                key))
+  (let ((search-key (if skk-use-numeric-conversion
+                        (skk-num-compute-henkan-key key)
+                      key))
+        c-word regexp-key)
+    (setq regexp-key (concat (regexp-quote search-key)
                              (skk-comp-get-regexp prefix)))
     (save-match-data
       ;; `case-fold-search' は、辞書バッファでは常に nil。
       (while (and (not c-word)
                   (re-search-forward (concat "\n" regexp-key) nil t))
         (beginning-of-line)
-        (search-forward (if skk-use-numeric-conversion
-                            (skk-num-compute-henkan-key key)
-                          key))
+        (search-forward search-key)
         (unless (eq (following-char)
                     ?\040)      ;SPC
           (setq c-word (concat key

@@ -503,7 +503,9 @@ If the event isn't a keypress, this returns nil."
   (when skk-echo
     ;; skk-prefix はアンドゥの対象とならないので
     ;; バッファに挿入される必要がない。
-    (setq skk-prefix-overlay (make-overlay (point) (point)))
+    (if (overlayp skk-prefix-overlay)
+        (move-overlay skk-prefix-overlay (point) (point))
+      (setq skk-prefix-overlay (make-overlay (point) (point))))
     (let ((prefix (or char skk-prefix)))
       (when (and skk-use-face (not skk-henkan-mode))
         (setq prefix

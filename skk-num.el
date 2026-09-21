@@ -78,7 +78,11 @@
 `skk-henkan-list' の INDEX が指している候補 \(数値変換キーの)\ を
   \"#2\" -> \(\"#2\" .\"一\"\)
 のように変換する。"
-  (let ((key (skk-get-current-candidate-1 index))
+  (let ((key (skk-get-current-candidate-1 index)))
+    (skk-num-convert-cell (nthcdr index skk-henkan-list) index)))
+
+(defun skk-num-convert-cell (cell index)
+  (let ((key (car cell))
         convlist current)
     (unless (consp key)
       (setq convlist (skk-num-convert-1 key))
@@ -90,8 +94,7 @@
         (setq current (mapconcat 'identity convlist ""))
         (if (skk-get-current-candidate-1)
             ;; ("A" "#2" "C") -> ("A" ("#2" ."一") "C")
-            (setcar (nthcdr index skk-henkan-list)
-                    (cons key current))
+            (setcar cell (cons key current))
           (setq skk-henkan-list
                 (nconc skk-henkan-list (list (cons key current))))))
        ;; #4
@@ -100,13 +103,10 @@
                          (skk-num-flatten-list convlist))))
           (setq current (cdar l))
           (if (and (> index -1)
-                   (nth index skk-henkan-list))
+                   (car cell))
               (progn
-                (setcar (nthcdr index skk-henkan-list) (car l))
-                (setq skk-henkan-list (skk-splice-in
-                                       skk-henkan-list
-                                       (1+ index)
-                                       (cdr l))))
+                (setcar cell (car l))
+                (setcdr cell (nconc (cdr l) (cdr cell))))
             (setq skk-henkan-list (nconc skk-henkan-list l))
             (skk-num-uniq))))))))
 
@@ -144,13 +144,15 @@
 
 ;;;###autoload
 (defun skk-num-multiple-convert (&optional count)
-  (let ((index skk-henkan-count))
+  (let ((index skk-henkan-count)
+        (cell (nthcdr skk-henkan-count skk-henkan-list)))
     (catch 'break
-      (while (nth index skk-henkan-list)
+      (while (car cell)
         (when (and count (> 0 count))
           (throw 'break nil))
-        (skk-num-convert index)
-        (setq index (1+ index))
+        (skk-num-convert-cell cell index)
+        (setq cell (cdr cell)
+              index (1+ index))
         (when count
           (setq count (1- count)))))
     (skk-num-uniq)))
