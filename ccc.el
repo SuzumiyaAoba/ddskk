@@ -183,98 +183,61 @@ This function is the same as `facemenu-color-equal'"
     (setq ccc-last-checked-buffer buf
           ccc-last-checked-frame frame)))
 
-;;
-;; buffer-local-cursor
-;;
-(defun ccc-set-buffer-local-cursor-color (color-name)
-  (interactive (ccc-read-color "Cursor color: "))
-  (let ((local ccc-buffer-local-cursor-color))
-    (setq ccc-buffer-local-cursor-color
-          (or color-name
-              (ccc-frame-cursor-color)))
-    (condition-case nil
-        (ccc-update-buffer-local-cursor-color)
-      (error
-       (setq ccc-buffer-local-cursor-color local)))))
+(defmacro ccc-define-buffer-local-color (kind prompt
+                                         &optional window-system-only)
+  "Define the buffer-local color functions for KIND (a symbol).
+This defines `ccc-set-buffer-local-KIND-color',
+`ccc-update-buffer-local-KIND-color' and
+`ccc-set-KIND-color-buffer-local'."
+  (let ((var (intern (format "ccc-buffer-local-%s-color" kind)))
+        (frame-fn (intern (format "ccc-frame-%s-color" kind)))
+        (current-fn (intern (format "ccc-current-%s-color" kind)))
+        (set-fn (intern (format "set-%s-color" kind)))
+        (setter (intern (format "ccc-set-buffer-local-%s-color" kind)))
+        (updater (intern (format "ccc-update-buffer-local-%s-color" kind)))
+        (localizer (intern (format "ccc-set-%s-color-buffer-local" kind))))
+    `(progn
+       (defun ,setter (color-name)
+         (interactive (ccc-read-color ,prompt))
+         ,@(when window-system-only
+             '((unless window-system
+                 (setq color-name nil))))
+         (let ((local ,var))
+           (setq ,var (or color-name
+                          (,frame-fn)))
+           (condition-case nil
+               (,updater)
+             (error
+              (setq ,var local)))))
+       (defun ,updater ()
+         (let ((color (if (stringp ,var)
+                          ,var
+                        (,frame-fn))))
+           (when (and ,@(when window-system-only '(window-system))
+                      (stringp color)
+                      (color-defined-p color)
+                      (not (ccc-color-equal color (,current-fn))))
+             (,set-fn color))))
+       (defun ,localizer (arg)
+         (if arg
+             (setq ,var (,current-fn))
+           (,set-fn (,frame-fn))
+           (setq ,var nil))))))
 
-(defun ccc-update-buffer-local-cursor-color ()
-  (let ((color (if (stringp ccc-buffer-local-cursor-color)
-                   ccc-buffer-local-cursor-color
-                 (ccc-frame-cursor-color))))
-    (when (and (stringp color)
-               (color-defined-p color)
-               (not (ccc-color-equal color (ccc-current-cursor-color))))
-      (set-cursor-color color))))
-
-(defun ccc-set-cursor-color-buffer-local (arg)
-  (if arg
-      (setq ccc-buffer-local-cursor-color (ccc-current-cursor-color))
-    (set-cursor-color (ccc-frame-cursor-color))
-    (setq ccc-buffer-local-cursor-color nil)))
+;;
+;; ccc-buffer-local-cursor-color
+;;
+(ccc-define-buffer-local-color cursor "Cursor color: ")
 
 ;;
 ;; ccc-buffer-local-foreground-color
 ;;
-(defun ccc-set-buffer-local-foreground-color (color-name)
-  (interactive (ccc-read-color "Foreground color: "))
-  (unless window-system
-    (setq color-name nil))
-  (let ((local ccc-buffer-local-foreground-color))
-    (setq ccc-buffer-local-foreground-color
-          (or color-name
-              (ccc-frame-foreground-color)))
-    (condition-case nil
-        (ccc-update-buffer-local-foreground-color)
-      (error
-       (setq ccc-buffer-local-foreground-color local)))))
-
-(defun ccc-update-buffer-local-foreground-color ()
-  (let ((color (if (stringp ccc-buffer-local-foreground-color)
-                   ccc-buffer-local-foreground-color
-                 (ccc-frame-foreground-color))))
-    (when (and window-system
-               (stringp color)
-               (color-defined-p color)
-               (not (ccc-color-equal color (ccc-current-foreground-color))))
-      (set-foreground-color color))))
-
-(defun ccc-set-foreground-color-buffer-local (arg)
-  (if arg
-      (setq ccc-buffer-local-foreground-color (ccc-current-foreground-color))
-    (set-foreground-color (ccc-frame-foreground-color))
-    (setq ccc-buffer-local-foreground-color nil)))
+(ccc-define-buffer-local-color foreground "Foreground color: " window-system)
 
 ;;
 ;; ccc-buffer-local-background-color
 ;;
-(defun ccc-set-buffer-local-background-color (color-name)
-  (interactive (ccc-read-color "Background color: "))
-  (unless window-system
-    (setq color-name nil))
-  (let ((local ccc-buffer-local-background-color))
-    (setq ccc-buffer-local-background-color
-          (or color-name
-              (ccc-frame-background-color)))
-    (condition-case nil
-        (ccc-update-buffer-local-background-color)
-      (error
-       (setq ccc-buffer-local-background-color local)))))
-
-(defun ccc-update-buffer-local-background-color ()
-  (let ((color (if (stringp ccc-buffer-local-background-color)
-                   ccc-buffer-local-background-color
-                 (ccc-frame-background-color))))
-    (when (and window-system
-               (stringp color)
-               (color-defined-p color)
-               (not (ccc-color-equal color (ccc-current-background-color))))
-      (set-background-color color))))
-
-(defun ccc-set-background-color-buffer-local (arg)
-  (if arg
-      (setq ccc-buffer-local-background-color (ccc-current-background-color))
-    (set-background-color (ccc-frame-background-color))
-    (setq ccc-buffer-local-background-color nil)))
+(ccc-define-buffer-local-color background "Background color: " window-system)
 
 (defun ccc-setup-current-colors ()
   (setq ccc-default-cursor-color (ccc-current-cursor-color)
@@ -287,28 +250,23 @@ This function is the same as `facemenu-color-equal'"
 ;; Advices.
 (define-advice modify-frame-parameters (:after (frame alist) ccc-ad)
   (setq ccc-frame-params-dirty t)
-  (when (and (assq 'cursor-color alist)
-             (null ccc-buffer-local-cursor-color))
-    (ccc-set-frame-cursor-color frame
-                                (cdr (assq 'cursor-color alist))))
-  (when (and (assq 'foreground-color alist)
-             (null ccc-buffer-local-foreground-color))
-    (ccc-set-frame-foreground-color frame
-                                    (cdr (assq 'foreground-color alist))))
-  (when (and (assq 'background-color alist)
-             (null ccc-buffer-local-background-color))
-    (ccc-set-frame-background-color frame
-                                    (cdr (assq 'background-color
-                                               alist)))))
+  (dolist (spec '((cursor-color
+                   ccc-buffer-local-cursor-color
+                   . ccc-set-frame-cursor-color)
+                  (foreground-color
+                   ccc-buffer-local-foreground-color
+                   . ccc-set-frame-foreground-color)
+                  (background-color
+                   ccc-buffer-local-background-color
+                   . ccc-set-frame-background-color)))
+    (let ((entry (assq (car spec) alist)))
+      (when (and entry
+                 (null (symbol-value (cadr spec))))
+        (funcall (cddr spec) frame (cdr entry))))))
 
 (define-advice custom-theme-checkbox-toggle
     (:after (widget &optional event) ccc-ad)
-  (setq ccc-default-cursor-color (ccc-current-cursor-color)
-        ccc-default-foreground-color (ccc-current-foreground-color)
-        ccc-default-background-color (ccc-current-background-color))
-  (ccc-set-frame-cursor-color (selected-frame) (ccc-current-cursor-color))
-  (ccc-set-frame-foreground-color (selected-frame) (ccc-current-foreground-color))
-  (ccc-set-frame-background-color (selected-frame) (ccc-current-background-color)))
+  (ccc-setup-current-colors))
 
 (define-advice enable-theme (:after (theme) ccc-ad)
   (ccc-setup-current-colors))

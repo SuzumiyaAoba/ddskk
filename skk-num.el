@@ -78,8 +78,9 @@
 `skk-henkan-list' の INDEX が指している候補 \(数値変換キーの)\ を
   \"#2\" -> \(\"#2\" .\"一\"\)
 のように変換する。"
-  (let ((key (skk-get-current-candidate-1 index)))
-    (skk-num-convert-cell (nthcdr index skk-henkan-list) index)))
+  ;; Signal an error for invalid INDEX.
+  (skk-get-current-candidate-1 index)
+  (skk-num-convert-cell (nthcdr index skk-henkan-list) index))
 
 (defun skk-num-convert-cell (cell index)
   (let ((key (car cell))
@@ -119,13 +120,13 @@
     (let ((numexp (if skk-num-convert-float
                       ;; "." を含める意図は?
                       "#[.0-9]+" "#[0-9]+"))
-          (n 0)
+          (nums skk-num-list)
           (workkey key)
           num convnum string convlist beg)
       (save-match-data
         (while (and
                 ;; 具体的な数値を保持しているリストを参照する。
-                (setq num (nth n skk-num-list))
+                (setq num (pop nums))
                 (setq beg (string-match numexp workkey)))
           (setq convnum     ; 数値変換された部分の文字列
                 ;; 具体的な数字を変換タイプに従い変換する。
@@ -136,8 +137,7 @@
                 ;; 処理された数値キーまでの prefix 文字列
                 string (substring workkey 0 beg)
                 ;; 未処理の文字列
-                workkey (substring workkey (match-end 0))
-                n (1+ n))
+                workkey (substring workkey (match-end 0)))
           ;; 変換された文字と数値変換に関係のない無変換の文字を並べたリスト
           (setq convlist (nconc convlist (list string convnum))))
         (delete "" (nconc convlist (list workkey)))))))

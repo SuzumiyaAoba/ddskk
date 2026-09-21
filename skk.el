@@ -1838,9 +1838,7 @@ CHAR-LIST の残りと辿れなくなった節点の木の組を返す。"
    (let* ((max-candidates skk-henkan-number-to-display-candidates)
           (candidate-keys ; 表示用のキーリスト
            (let ((prev-cand-key-descs
-                  (mapcar #'key-description
-                          (where-is-internal 'skk-previous-candidate
-                                             skk-j-mode-map))))
+                  (skk-key-binding-descs '(skk-previous-candidate))))
              (mapcar (lambda (c)
                        (when (or (memq c '(?\C-g skk-start-henkan-char))
                                  (member (key-description
@@ -1869,23 +1867,13 @@ CHAR-LIST の残りと辿れなくなった節点の木の組を返す。"
           reverse
           n
           (rshift-key-descs
-           (mapcar #'key-description
-                   (where-is-internal 'skk-nicola-self-insert-rshift
-                                      skk-j-mode-map)))
+           (skk-key-binding-descs '(skk-nicola-self-insert-rshift)))
           (prev-undo-key-descs
-           (mapcar #'key-description
-                   (apply #'append
-                          (mapcar (lambda (cmd)
-                                    (where-is-internal cmd skk-j-mode-map))
-                                  '(skk-previous-candidate
+           (skk-key-binding-descs '(skk-previous-candidate
                                     skk-delete-backward-char
-                                    skk-undo)))))
+                                    skk-undo)))
           (quit-key-descs
-           (mapcar #'key-description
-                   (apply #'append
-                          (mapcar (lambda (cmd)
-                                    (where-is-internal cmd skk-j-mode-map))
-                                  skk-quit-commands)))))
+           (skk-key-binding-descs skk-quit-commands)))
      ;; Emacs 19.28 だと Overlay を消しておかないと、次に insert される
      ;; skk-henkan-key に何故か Overlay がかかってしまう。
      (when skk-use-face

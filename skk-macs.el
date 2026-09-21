@@ -645,20 +645,24 @@ If the event isn't a keypress, this returns nil."
              ;; 文字列を対応する char のリストに分解する。
              (append word nil) ""))
 
-(defun skk-key-binding-member (key commands &optional map)
-  "入力 KEY が発動するコマンドが、COMMANDS に含まれれば non-nil を返す。
-MAP は入力が書かれているキーマップを指定するが、指定されなければ
-`skk-j-mode-map' を参照する。
-この関数は、入力 KEY が `lookup-key' で探せない形式でありうる場合に用いる。"
+(defun skk-key-binding-descs (commands &optional map)
+  "Return the list of `key-description' strings bound to COMMANDS in MAP.
+MAP defaults to `skk-j-mode-map'."
   (unless map
     (setq map skk-j-mode-map))
   (let (keys)
     (dolist (command commands)
       (setq keys (nconc keys
                         (where-is-internal command map))))
-    (member (key-description key)
-            (mapcar #'key-description
-                    keys))))
+    (mapcar #'key-description keys)))
+
+(defun skk-key-binding-member (key commands &optional map)
+  "入力 KEY が発動するコマンドが、COMMANDS に含まれれば non-nil を返す。
+MAP は入力が書かれているキーマップを指定するが、指定されなければ
+`skk-j-mode-map' を参照する。
+この関数は、入力 KEY が `lookup-key' で探せない形式でありうる場合に用いる。"
+  (member (key-description key)
+            (skk-key-binding-descs commands map)))
 
 (defun skk-update-minor-mode-map-alist (mode map)
   (let ((element (assq mode minor-mode-map-alist)))
