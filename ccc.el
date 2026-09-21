@@ -54,6 +54,10 @@
 (defvar ccc-default-foreground-color nil)
 (defvar ccc-default-background-color nil)
 
+(defvar ccc-frame-params-dirty t)
+(defvar ccc-last-checked-buffer nil)
+(defvar ccc-last-checked-frame nil)
+
 ;; Frame parameters.
 (defsubst ccc-current-cursor-color ()
   (cdr (assq 'cursor-color (frame-parameters (selected-frame)))))
@@ -161,12 +165,23 @@ This function is the same as `facemenu-color-equal'"
 
 ;;;###autoload
 (defun ccc-update-buffer-local-frame-params (&optional buffer)
-  (with-current-buffer (if (buffer-live-p buffer)
-                           buffer
-                         (window-buffer (selected-window)))
-    (ccc-update-buffer-local-cursor-color)
-    (ccc-update-buffer-local-foreground-color)
-    (ccc-update-buffer-local-background-color)))
+  (let ((buf (if (buffer-live-p buffer)
+                 buffer
+               (window-buffer (selected-window))))
+        (frame (selected-frame)))
+    (with-current-buffer buf
+      (when (or ccc-frame-params-dirty
+                (not (eq buf ccc-last-checked-buffer))
+                (not (eq frame ccc-last-checked-frame))
+                ccc-buffer-local-cursor-color
+                ccc-buffer-local-foreground-color
+                ccc-buffer-local-background-color)
+        (ccc-update-buffer-local-cursor-color)
+        (ccc-update-buffer-local-foreground-color)
+        (ccc-update-buffer-local-background-color)
+        (setq ccc-frame-params-dirty nil)))
+    (setq ccc-last-checked-buffer buf
+          ccc-last-checked-frame frame)))
 
 ;;
 ;; buffer-local-cursor
@@ -271,6 +286,7 @@ This function is the same as `facemenu-color-equal'"
 
 ;; Advices.
 (define-advice modify-frame-parameters (:after (frame alist) ccc-ad)
+  (setq ccc-frame-params-dirty t)
   (when (and (assq 'cursor-color alist)
              (null ccc-buffer-local-cursor-color))
     (ccc-set-frame-cursor-color frame

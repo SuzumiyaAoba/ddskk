@@ -242,10 +242,11 @@
   (ignore-errors (executable-find skk-annotation-dict-program)))
 
 (defun skkannot-check-lookup ()
-  (unless (and (boundp 'lookup-search-agents)
-               (symbol-value 'lookup-search-agents)
-               (locate-library "lookup")
-               (locate-library "skk-lookup"))
+  (when (and (memq 'lookup.el skk-annotation-other-sources)
+             (not (and (boundp 'lookup-search-agents)
+                       (symbol-value 'lookup-search-agents)
+                       (locate-library "lookup")
+                       (locate-library "skk-lookup"))))
     (setq skk-annotation-other-sources
           (delq 'lookup.el skk-annotation-other-sources))))
 

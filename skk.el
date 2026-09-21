@@ -1060,8 +1060,8 @@ Delete Selection $B%b!<%I$,(B SKK $B$r;H$C$?F|K\8lF~NO$KBP$7$F$b5!G=$9$k$h$&$
 
            ;;
            ((and (eq skk-henkan-mode 'on) ; $B"&%b!<%I(B
-                 (memq ch (list skk-next-completion-char
-                                skk-previous-completion-char))
+                 (or (eq ch skk-next-completion-char)
+                     (eq ch skk-previous-completion-char))
                  (eq last-command 'skk-comp-do))
             (skk-comp-previous/next ch))
 
@@ -1070,7 +1070,7 @@ Delete Selection $B%b!<%I$,(B SKK $B$r;H$C$?F|K\8lF~NO$KBP$7$F$b5!G=$9$k$h$&$
             (setq skk-insert-keysequence (concat skk-insert-keysequence (string ch)))
             (skk-kana-input arg)))
      ;; verbose message
-     (skk-henkan-on-message))))
+     (when skk-verbose (skk-henkan-on-message)))))
 
 (defun skk-process-prefix-or-suffix (&optional arg)
   "$B@\F,<-$^$?$O@\Hx<-$NF~NO$r3+;O$9$k!#(B
@@ -1837,16 +1837,20 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
   (skk-save-point
    (let* ((max-candidates skk-henkan-number-to-display-candidates)
           (candidate-keys ; $BI=<(MQ$N%-!<%j%9%H(B
-           (mapcar (lambda (c)
-                     (when (or (memq c '(?\C-g skk-start-henkan-char))
-                               (skk-key-binding-member
-                                (skk-char-to-unibyte-string c)
-                                '(skk-previous-candidate)))
-                       (skk-error "`%s' $B$KL58z$J%-!<$,;XDj$5$l$F$$$^$9(B"
-                                  "Illegal key in `%s'"
-                                  "skk-henkan-show-candidates-keys"))
-                     (skk-char-to-unibyte-string (upcase c)))
-                   skk-henkan-show-candidates-keys))
+           (let ((prev-cand-key-descs
+                  (mapcar #'key-description
+                          (where-is-internal 'skk-previous-candidate
+                                             skk-j-mode-map))))
+             (mapcar (lambda (c)
+                       (when (or (memq c '(?\C-g skk-start-henkan-char))
+                                 (member (key-description
+                                          (skk-char-to-unibyte-string c))
+                                         prev-cand-key-descs))
+                         (skk-error "`%s' $B$KL58z$J%-!<$,;XDj$5$l$F$$$^$9(B"
+                                    "Illegal key in `%s'"
+                                    "skk-henkan-show-candidates-keys"))
+                       (skk-char-to-unibyte-string (upcase c)))
+                     skk-henkan-show-candidates-keys)))
           key-num-alist ; $B8uJdA*BrMQ$NO"A[%j%9%H(B
           (key-num-alist1 ; key-num-alist $B$rAH$_N)$F$k$?$a$N:n6HMQO"A[%j%9%H!#(B
            ;; $B5U$5$^$K$7$F$*$$$F!"I=<($9$k8uJd$N?t$,>/$J$+$C$?$i@h(B
@@ -1863,7 +1867,25 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
           henkan-list
           new-one
           reverse
-          n)
+          n
+          (rshift-key-descs
+           (mapcar #'key-description
+                   (where-is-internal 'skk-nicola-self-insert-rshift
+                                      skk-j-mode-map)))
+          (prev-undo-key-descs
+           (mapcar #'key-description
+                   (apply #'append
+                          (mapcar (lambda (cmd)
+                                    (where-is-internal cmd skk-j-mode-map))
+                                  '(skk-previous-candidate
+                                    skk-delete-backward-char
+                                    skk-undo)))))
+          (quit-key-descs
+           (mapcar #'key-description
+                   (apply #'append
+                          (mapcar (lambda (cmd)
+                                    (where-is-internal cmd skk-j-mode-map))
+                                  skk-quit-commands)))))
      ;; Emacs 19.28 $B$@$H(B Overlay $B$r>C$7$F$*$+$J$$$H!"<!$K(B insert $B$5$l$k(B
      ;; skk-henkan-key $B$K2?8N$+(B Overlay $B$,$+$+$C$F$7$^$&!#(B
      (when skk-use-face
@@ -1935,9 +1957,7 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
                            loop nil))
 
                     ((or (eq char skk-start-henkan-char) ; SPC
-                         (skk-key-binding-member key
-                                                 '(skk-nicola-self-insert-rshift)
-                                                 skk-j-mode-map))
+                         (member (key-description key) rshift-key-descs))
                      ;;
                      (if (or skk-current-search-prog-list
                              (nthcdr max-candidates henkan-list))
@@ -1967,11 +1987,7 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
                      (setq skk-show-candidates-always-pop-to-buffer
                            (not skk-show-candidates-always-pop-to-buffer)))
 
-                    ((skk-key-binding-member key
-                                             '(skk-previous-candidate
-                                               skk-delete-backward-char
-                                               skk-undo)
-                                             skk-j-mode-map)
+                    ((member (key-description key) prev-undo-key-descs)
                      (cl-case loop
                        (0
                         ;; skk-henkan-show-candidates $B$r8F$VA0$N(B
@@ -1984,8 +2000,7 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
                     ((eq char skk-annotation-toggle-display-char)
                      (skk-annotation-toggle-display-p))
 
-                    ((skk-key-binding-member key skk-quit-commands
-                                             skk-j-mode-map)
+                    ((member (key-description key) quit-key-descs)
                      ;;
                      (signal 'quit nil))
 
@@ -2509,7 +2524,7 @@ auto $B$K@_Dj$9$k$H%f!<%6$K3NG'$7$J$$!#(B
                   (= skk-henkan-count -1))
          (skk-abbrev-mode-on)))))
    ;; verbose message
-   (skk-henkan-on-message)))
+   (when skk-verbose (skk-henkan-on-message))))
 
 (defun skk-undo (&optional arg)
   "`undo' $B$N5!G=$r!"(BSKK $B$H$N@09g@-$r9M$($FD4@a$9$k!#(B"
@@ -4899,7 +4914,6 @@ SKK $B<-=q$N8uJd$H$7$F@5$7$$7A$K@07A$9$k!#(B"
   (when (and face
              (marker-position skk-henkan-start-point)
              (marker-position skk-henkan-end-point))
-    (setq skk-henkan-overlay nil)
     (skk-face-on skk-henkan-overlay
                  skk-henkan-start-point skk-henkan-end-point
                  face skk-henkan-overlay-priority)))
@@ -5164,7 +5178,8 @@ FACE $B$O!VA07J?'!WKt$O!VA07J?'(B + $B%9%i%C%7%e(B + $BGX7J?'!W$N7A<0$G;XDj
 
 (defun skk-henkan-off-by-quit ()
   "$B"&%b!<%I$r%-%c%s%;%k$7$F"#%b!<%I$KLa$k!#J8;zNs$OGK4~$9$k!#(B"
-  (if (memq 'skk-comp-do (list last-command this-command))
+  (if (or (eq 'skk-comp-do last-command)
+              (eq 'skk-comp-do this-command))
       (skk-with-point-move
        (delete-region skk-henkan-start-point (point))
        (insert skk-comp-key)

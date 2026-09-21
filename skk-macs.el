@@ -110,15 +110,12 @@ MARKER が nil だったら、新規マーカーを作って代入する。"
 
 (defmacro skk-face-on (object start end face &optional priority)
   `(let ((inhibit-quit t))
+     ;;(overlay-put (, object) 'evaporate t)
      (if (not (overlayp ,object))
-         (progn
-           (setq ,object (make-overlay ,start ,end))
-           (when ,priority
-             (overlay-put ,object 'priority ,priority))
-           (overlay-put ,object 'face ,face)
-           ;;(overlay-put (, object) 'evaporate t)
-           )
-       (move-overlay ,object ,start ,end))))
+         (setq ,object (make-overlay ,start ,end))
+       (move-overlay ,object ,start ,end))
+     (overlay-put ,object 'priority ,priority)
+     (overlay-put ,object 'face ,face)))
 
 ;;;###autoload
 (put 'skk-loop-for-buffers 'lisp-indent-function 1)
