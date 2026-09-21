@@ -50,25 +50,27 @@
     ;;(setq skk-noconv-henkan-key key)
     (save-match-data
       ;; 全角数字を ascii 数字に変換する。
-      (while (string-match "[０-９]" key)
-        (let ((zen-num (match-string 0 key)))
-          (setq key (concat (substring key 0 (match-beginning 0))
-                            (skk-jisx0208-to-ascii zen-num)
-                            (substring key (match-end 0))))))
+      (when (string-match "[０-９]" key)
+        (setq key (replace-regexp-in-string
+                   "[０-９]"
+                   (lambda (zen-num)
+                     (skk-jisx0208-to-ascii zen-num))
+                   key)))
       ;; 位取りの "," を除去する。
-      (while (string-match "[0-9]\\(,\\)[0-9]" key)
-        (setq key (concat (substring key 0 (match-beginning 1))
-                          (substring key (match-end 1)))))
+      (while (string-match "\\([0-9]\\),\\([0-9]\\)" key)
+        (setq key (replace-match "\\1\\2" nil nil key)))
       ;; 重複を避ける。
       (when (string-match numexp key)
-        (setq skk-num-list nil))
-      ;; ascii 数字を "#" に置き換え、その数字を skk-num-list の中に保存。
-      (while (string-match numexp key)
-        (setq skk-num-list (nconc skk-num-list (list (match-string 0 key)))
-              key (concat (substring key 0 (match-beginning 0))
-                          "#"
-                          (substring key (match-end 0)))))))
-  key)
+        (setq skk-num-list nil)
+        ;; ascii 数字を "#" に置き換え、その数字を skk-num-list の中に保存。
+        (setq key (replace-regexp-in-string
+                   numexp
+                   (lambda (num)
+                     (setq skk-num-list (cons num skk-num-list))
+                     "#")
+                   key))
+        (setq skk-num-list (nreverse skk-num-list))))
+    key))
 
 ;;;###autoload
 (defun skk-num-convert (index)

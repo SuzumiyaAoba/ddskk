@@ -3281,15 +3281,17 @@ TYPE ($BJ8;z$N<oN`(B) $B$K1~$8$?J8;z$r%9%-%C%W$7$F%P%C%U%!$N@hF,J}8~$XLa$k!#
   "$B8=:_$N%]%$%s%H$K$"$kJ8;z$N<oN`$rH=JL$9$k!#(B
 $BJ8;z$N<oN`$K1~$8$F!"<!$N$$$:$l$+$N%7%s%\%k$rJV$9!#(B
 \\='hiragana \\='katakana \\='jisx0208-latin \\='ascii \\='unknown"
-  (save-match-data
-    (cond ((looking-at "[$B$!(B-$B$s(B]")
+  (let ((char (following-char)))
+    (cond ((<= ?$B$!(B char ?$B$s(B)
            'hiragana)
-          ((looking-at "[$B%!(B-$B%v!3!4(B]")
+          ((or (<= ?$B%!(B char ?$B%v(B)
+               (<= ?$B!3(B char ?$B!4(B))
            'katakana)
           ;; "$B!<(B" $B$r=|30$7$F$$$k(B ("$B!<(B" $B$O(B "$B!;(B" $B$H(B "$B!=(B" $B$N4V$KF~$C$F$$$k(B)$B!#(B
-          ((looking-at "[$B!!(B-$B!;!=(B-$B#z(B]")
+          ((or (<= ?$B!!(B char ?$B!;(B)
+               (<= ?$B!=(B char ?$B#z(B))
            'jisx0208-latin)
-          ((looking-at "[ -~]")
+          ((<= ?\s char ?~)
            'ascii)
           (t
            'unknown))))
@@ -3898,21 +3900,22 @@ If you want to restore the dictionary from your drive, try
 $B$$$:$l$+$NMWAG$,8uJd$r8+$D$1$?;~E@$G=*N;$9$k!#(B"
   ;; $B8D?M<-=q$G8uJd$,8+$D$+$l$P$=$l$rJV$9!J(BL $B<-=q$^$G8+$K$$$/Lu$G$O$J$$!K(B
   (let (l prog)
-    (while (and (null l)
-                skk-current-search-prog-list)
-      (setq prog (car skk-current-search-prog-list))
-      (setq l (if (and skk-use-numeric-conversion
-                       (string-match "[0-9]" skk-henkan-key)
-                       (skk-numeric-program-p prog))
-                  ;; -- 12.2.1 $B$+$i$NJQ99(B --
-                  ;; $B?tCMJQ49;~$K!"Hs?tCMJQ49$bF1;~$K8!:w$7$F8uJd$K(B
-                  ;; $B4^$a$k!#(B
-                  (skk-nunion (let (skk-use-numeric-conversion)
+    (let ((numeric-key-p (and skk-use-numeric-conversion
+                              (string-match "[0-9]" skk-henkan-key))))
+      (while (and (null l)
+                  skk-current-search-prog-list)
+        (setq prog (car skk-current-search-prog-list))
+        (setq l (if (and numeric-key-p
+                         (skk-numeric-program-p prog))
+                    ;; -- 12.2.1 $B$+$i$NJQ99(B --
+                    ;; $B?tCMJQ49;~$K!"Hs?tCMJQ49$bF1;~$K8!:w$7$F8uJd$K(B
+                    ;; $B4^$a$k!#(B
+                    (skk-nunion (let (skk-use-numeric-conversion)
+                                  (eval prog))
                                 (eval prog))
-                              (eval prog))
-                (let (skk-use-numeric-conversion)
-                  (eval prog))))
-      (setq skk-current-search-prog-list (cdr skk-current-search-prog-list)))
+                  (let (skk-use-numeric-conversion)
+                    (eval prog))))
+        (setq skk-current-search-prog-list (cdr skk-current-search-prog-list))))
     (setq skk-search-state (list skk-henkan-key prog l))
     l))
 
@@ -4036,24 +4039,31 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
               max (point-max)))
       (when (> limit 0)
         ;; $BFsJ,C5:w(B
-        (while (> (setq size (- max min)) limit)
-          (goto-char (+ min (/ size 2)))
-          (beginning-of-line)
-          (setq p (point))
-          (if (= p min)
-              (setq max min)    ; return
-            (let ((p-is-further
-                   ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
-                   (if okurigana
-                       (skk-string< (buffer-substring-no-properties
-                                     p (1- (search-forward  " ")))
-                                    skk-henkan-key)
-                     (skk-string< skk-henkan-key
-                                  (buffer-substring-no-properties
-                                   p (1- (search-forward " ")))))))
-              (if p-is-further
-                  (setq max p)
-                (setq min p))))))
+        (let ((encoded-key (encode-coding-string skk-henkan-key
+                                                 'emacs-mule)))
+          (while (> (setq size (- max min)) limit)
+            (goto-char (+ min (/ size 2)))
+            (beginning-of-line)
+            (setq p (point))
+            (if (= p min)
+                (setq max min)    ; return
+              (let ((p-is-further
+                     ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
+                     (if okurigana
+                         (string< (encode-coding-string
+                                   (buffer-substring-no-properties
+                                    p (1- (search-forward  " ")))
+                                   'emacs-mule)
+                                  encoded-key)
+                       (string< encoded-key
+                                (encode-coding-string
+                                 (buffer-substring-no-properties
+                                  p (1- (search-forward " ")))
+                                 'emacs-mule)))))
+                (if p-is-further
+                    (setq max p)
+                  (setq min p)))))))
+
       (goto-char min)
       ;; key $B$,8!:w3+;OCOE@$K$"$C$?>l9g$G$b8!:w2DG=$J$h$&$K0lJ8;zLa$k!#(B
       ;; key $B$N@hF,ItJ,$K(B "\n" $B$,4^$^$l$F$$$k$3$H$KCm0U!#(B
@@ -4188,10 +4198,12 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
 ;;;###autoload
 (defun skk-remove-duplicates (list)
   "LIST $B$+$i!"=EJ#$9$kMWAG$r=|30$7$?%j%9%H$rJV$9!#(B"
-  (let (new)
+  (let ((table (make-hash-table :test #'equal))
+        new)
     (dolist (x list)
-      (or (member x new)
-          (setq new (cons x new))))
+      (unless (gethash x table)
+        (puthash x t table)
+        (setq new (cons x new))))
     (nreverse new)))
 
 (defun skk-search-kakutei-jisyo-file (file limit &optional nomsg)
@@ -4678,7 +4690,10 @@ SKK $B<-=q$N8uJd$H$7$F@5$7$$7A$K@07A$9$k!#(B"
             (when (and remove-note
                        (string-match ";" word))
               (setq word (substring word 0 (match-beginning 0))))
-            (setq words (skk-nunion words (list word))))))
+            (setq words (cons word words)))))
+      (when words
+        (let ((rest (nreverse words)))
+          (setq words (skk-nunion (list (car rest)) (cdr rest)))))
       words)))
 
 (defun skk-search-sagyo-henkaku-maybe ()
@@ -4852,20 +4867,22 @@ SKK $B<-=q$N8uJd$H$7$F@5$7$$7A$K@07A$9$k!#(B"
 ;;;###autoload
 (defun skk-hiragana-to-katakana (hiragana)
   (let ((diff (- ?$B%"(B ?$B$"(B)))
-    (mapconcat (lambda (e)
-                 (if (and (<= ?$B$!(B e) (>= ?$B$s(B e))
-                     (char-to-string (+ e diff))
-                   (char-to-string e)))
-               (string-to-list hiragana) "")))
+    (apply #'string
+           (mapcar (lambda (e)
+                     (if (<= ?$B$!(B e ?$B$s(B)
+                         (+ e diff)
+                       e))
+                   (string-to-list hiragana)))))
 
 ;;;###autoload
 (defun skk-katakana-to-hiragana (katakana)
   (let ((diff (- ?$B%"(B ?$B$"(B)))
-    (mapconcat (lambda (e)
-                 (if (and (<= ?$B%!(B e) (>= ?$B%s(B e))
-                     (char-to-string (- e diff))
-                   (char-to-string e)))
-               (string-to-list katakana) "")))
+    (apply #'string
+           (mapcar (lambda (e)
+                     (if (<= ?$B%!(B e ?$B%s(B)
+                         (- e diff)
+                       e))
+                   (string-to-list katakana)))))
 
 ;;;###autoload
 (defun skk-henkan-face-on (&optional face)

@@ -1946,25 +1946,27 @@ METHOD が 2 であれば数値 NUM は総画数として検索を実行する。
 通常は `skk-search-prog-list' の１要素として次の形式で指定される。
 \\='(skk-tankan-search \\='skk-search-jisyo-file
                     skk-large-jisyo 10000))"
-  (when (string-match (format "%s$" (regexp-quote
-                                     (char-to-string skk-tankan-search-key)))
-                      skk-henkan-key)
-    (let ((skk-henkan-key (substring skk-henkan-key 0 (match-beginning 0))))
-      ;; get KOUHO list
-      (skk-tankan-select-tankanji-kouho
-       (cons nil (cond
-                  ;; ▽12@ <SPC> => 総画数変換
-                  ((string-match "^[0-9]+$" skk-henkan-key)
-                   (skk-search-by-stroke-or-radical
-                    (string-to-number skk-henkan-key) 2))
-                  ;; ▽@@ <SPC> => 部首変換
-                  ((equal (char-to-string skk-tankan-search-key)
-                          skk-henkan-key)
-                   (skk-search-by-stroke-or-radical
-                    (skk-tankan-bushu-compread) 0))
-                  ;; ▽あ <SPC> => "読み"単漢字変換
-                  (t
-                   (apply func args))))))))
+  (let ((key-len (length skk-henkan-key)))
+    (when (and (> key-len 0)
+               (eq (aref skk-henkan-key (1- key-len))
+                   skk-tankan-search-key))
+      (let ((skk-henkan-key (substring skk-henkan-key 0 (1- key-len))))
+        ;; get KOUHO list
+        (skk-tankan-select-tankanji-kouho
+         (cons nil (cond
+                    ;; ▽12@ <SPC> => 総画数変換
+                    ((string-match "^[0-9]+$" skk-henkan-key)
+                     (skk-search-by-stroke-or-radical
+                      (string-to-number skk-henkan-key) 2))
+                    ;; ▽@@ <SPC> => 部首変換
+                    ((and (= (length skk-henkan-key) 1)
+                          (eq (aref skk-henkan-key 0)
+                              skk-tankan-search-key))
+                     (skk-search-by-stroke-or-radical
+                      (skk-tankan-bushu-compread) 0))
+                    ;; ▽あ <SPC> => "読み"単漢字変換
+                    (t
+                     (apply func args)))))))))
 
 (defun skk-tankan-select-tankanji-kouho (lis)
   (let ((top lis)

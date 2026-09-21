@@ -165,7 +165,17 @@ If the event isn't a keypress, this returns nil."
        (fboundp 'x-display-color-p)
        (x-display-color-p)))
 
+(defconst skk-unibyte-string-table (make-vector 256 nil)
+  "`skk-char-to-unibyte-string' のキャッシュ表。")
+
 (defun skk-char-to-unibyte-string (char)
+  (if (and (integerp char) (<= 0 char 255))
+      (or (aref skk-unibyte-string-table char)
+          (aset skk-unibyte-string-table char
+                (skk-char-to-unibyte-string-1 char)))
+    (skk-char-to-unibyte-string-1 char)))
+
+(defun skk-char-to-unibyte-string-1 (char)
   (ignore-errors
     (cond
      ;; Warning: `string-make-unibyte' is an obsolete function (as of 26.1).
@@ -706,30 +716,31 @@ Return the modified ALIST."
     x)
    (t
     (save-match-data
-      (let ((list2 y) list1 origlist1 e1 e2)
-        (while list2
-          (setq list1 (cons nil x)
-                e2 (car list2)
-                origlist1 list1)
-          (catch 'found
-            (while (setq e1 (cadr list1))
-              (cond
-               ((equal e1 e2)
-                (throw 'found nil))
-               ((and (stringp e1)
-                     (stringp e2)
-                     (string-match ";" e1))
-                (setq e1 (substring e1 0 (match-beginning 0)))
-                (when (or (equal e1 e2)
-                          (and
-                           (string-match ";" e2)
-                           (equal (substring e2 0 (match-beginning 0))
-                                  e1)))
-                  (throw 'found nil))))
-              (setq list1 (cdr list1)))
-            (setcdr list1 (list e2))
-            (setq x (cdr origlist1)))
-          (setq list2 (cdr list2)))
+      (let ((table (make-hash-table :test #'equal))
+            (tail (last x))
+            key semi)
+        ;; 各要素の比較キーをハッシュ表に登録する。要素が ";" を含む
+        ;; 場合はそれ以降の注釈部分を除いた文字列をキーとし、注釈の有無を
+        ;; 値のビット (1: なし, 2: あり) で記録する。
+        (dolist (e1 x)
+          (setq semi (and (stringp e1) (string-match ";" e1))
+                key (if semi (substring e1 0 semi) e1))
+          (puthash key
+                   (logior (gethash key table 0) (if semi 2 1))
+                   table))
+        (dolist (e2 y)
+          (setq semi (and (stringp e2) (string-match ";" e2))
+                key (if semi (substring e2 0 semi) e2))
+          ;; 注釈つきの要素は注釈つきの既存要素と、注釈なしの要素は
+          ;; キーが一致する全ての既存要素と重複とみなす。
+          (unless (if semi
+                      (> (logand (gethash key table 0) 2) 0)
+                    (gethash key table))
+            (puthash key
+                     (logior (gethash key table 0) (if semi 2 1))
+                     table)
+            (setcdr tail (list e2))
+            (setq tail (cdr tail))))
         x)))))
 
 (defun skk-splice-in (org offset spliced)
