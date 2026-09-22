@@ -371,7 +371,11 @@ If the event isn't a keypress, this returns nil."
 
 (defsubst skk-numeric-p ()
   (and skk-use-numeric-conversion
-       (require 'skk-num)
+       ;; `require' scans `features' with memq on every call.  Once
+       ;; skk-num is loaded (or merely autoloaded) its entry point is
+       ;; fbound, so we can skip `require' in the common case.
+       (or (fboundp 'skk-num-compute-henkan-key)
+           (require 'skk-num))
        skk-num-list))
 
 (defsubst skk-file-exists-and-writable-p (file)

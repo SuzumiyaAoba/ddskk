@@ -415,37 +415,109 @@ TYPE は下記の通り。
   (when (and skk-num-uniq
              skk-henkan-list)
     (save-match-data
-      (let ((n1 -1)
-            n2
+      ;; Walk `skk-henkan-list' with the same index semantics as a plain
+      ;; `(nth n1 skk-henkan-list)' loop, but without re-scanning the list
+      ;; on every iteration.  `delete'/`delq' shrink the list while it is
+      ;; being walked, so the element fetched at index n1 is the n1-th
+      ;; *surviving* element, and elements that slide into a consumed
+      ;; index are never examined.  `cell' walks the original cons spine
+      ;; once; `live' counts the still-live elements among the cells
+      ;; visited so far; an element is dead when its value is in
+      ;; `removed' (a string deleted with `delete') or it is a cons cell
+      ;; recorded in `dead-cons' (removed with `delq').  `strhist' and
+      ;; `visited-cons' remember how many already-visited elements die at
+      ;; each removal so `live' can be adjusted.
+      (let ((cell skk-henkan-list)
+            (live 0)
+            (n1 -1)
+            (removed (make-hash-table :test 'equal))
+            (strhist (make-hash-table :test 'equal))
+            (dead-cons (make-hash-table :test 'eq))
+            (visited-cons (make-hash-table :test 'eq))
             e1 e2 e3
-            ;; 1 つでも 2 桁以上の数字があれば、#2 と #3 では uniq しない。
+            ;; 1 $B$D$G$b 2 $B7e0J>e$N?t;z$,$"$l$P!"#2 $B$H #3 $B$G$O uniq $B$7$J$$!#
             (type2and3 (> 2 (apply 'max (mapcar 'length skk-num-list))))
             type2 type3
             index2 index3
             head2 head3
             tail2 tail3
             case-fold-search)
-        (while (setq n1 (1+ n1) e1 (nth n1 skk-henkan-list))
-          ;; cons cell でなければ skk-nunion で処理済みなので、重複はない。
+        (while
+            (progn
+              (setq n1 (1+ n1)
+                    e1 nil)
+              ;; Advance CELL until LIVE reaches N1+1, i.e. until the
+              ;; element currently at index N1 has been visited.
+              (while (and cell (not e1))
+                (let ((e (car cell)))
+                  (when (if (consp e)
+                            (not (gethash e dead-cons))
+                          (not (gethash e removed)))
+                    (setq live (1+ live))
+                    (if (consp e)
+                        (puthash e (1+ (gethash e visited-cons 0))
+                                 visited-cons)
+                      (puthash e (1+ (gethash e strhist 0)) strhist))
+                    (when (= live (1+ n1))
+                      (setq e1 e))))
+                (setq cell (cdr cell)))
+              e1)
+          ;; cons $B%;%k$G$J$1$l$P skk-nunion $B$G=hM}:Q$_$J$N$G!"=EJ#$O$J$$!#
           (when (consp e1)
-            (setq skk-henkan-list (delete (car e1) skk-henkan-list)
-                  skk-henkan-list (delete (cdr e1) skk-henkan-list)))
+            (unless (gethash (car e1) removed)
+              (puthash (car e1) t removed)
+              (setq live (- live (gethash (car e1) strhist 0))
+                    skk-henkan-list (delete (car e1) skk-henkan-list)))
+            (unless (gethash (cdr e1) removed)
+              (puthash (cdr e1) t removed)
+              (setq live (- live (gethash (cdr e1) strhist 0))
+                    skk-henkan-list (delete (cdr e1) skk-henkan-list))))
           (when (and skk-num-recompute-key (consp e1))
-            ;; ("#4" . "xxx") を含む候補が skk-henkan-list の中にある。
-            (setq n2 -1)
-            (while (setq n2 (1+ n2) e2 (nth n2 skk-henkan-list))
-              (when (and (not (= n1 n2)) (consp e2)
-                         ;; 例えば ("#4" . "一") と ("#2" . "一") が
-                         ;; 並存している場合。
-                         (string= (cdr e1) (cdr e2)))
-                (setq skk-henkan-list (delq e2 skk-henkan-list)))))
+            ;; ("#4" . "xxx") $B$r4^$`8uJd$, skk-henkan-list $B$NCf$K$"$k!#
+            ;; The inner loop used `(nth n2 skk-henkan-list)', too.  Its
+            ;; `(not (= n1 n2))' guard compares loop counters, not list
+            ;; elements: when the `delete' calls above removed elements
+            ;; located before E1, E1 sits at an index smaller than N1 and
+            ;; gets `delq'ed as well.  Reproduce that faithfully.
+            (let ((cell2 skk-henkan-list)
+                  (live2 0)
+                  (n2 -1)
+                  ;; `delq' removes every occurrence of E2, so remember
+                  ;; how many live occurrences each visited cons has.
+                  (icons (make-hash-table :test 'eq)))
+              (while
+                  (progn
+                    (setq n2 (1+ n2)
+                          e2 nil)
+                    (while (and cell2 (not e2))
+                      (let ((e (car cell2)))
+                        (when (if (consp e)
+                                  (not (gethash e dead-cons))
+                                (not (gethash e removed)))
+                          (setq live2 (1+ live2))
+                          (when (consp e)
+                            (puthash e (1+ (gethash e icons 0)) icons))
+                          (when (= live2 (1+ n2))
+                            (setq e2 e))))
+                      (setq cell2 (cdr cell2)))
+                    e2)
+                (when (and (not (= n1 n2)) (consp e2)
+                           ;; $BNc$($P ("#4" . "$B0l") $B$H ("#2" . "$B0l") $B$,
+                           ;; $BJBB8$7$F$$$k>l9g!#
+                           (string= (cdr e1) (cdr e2)))
+                  (unless (gethash e2 dead-cons)
+                    (puthash e2 t dead-cons)
+                    (setq live (- live (gethash e2 visited-cons 0))
+                          live2 (- live2 (gethash e2 icons 0))
+                          skk-henkan-list
+                          (delq e2 skk-henkan-list)))))))
           (when type2and3
-            ;; 1 桁の数字を変換する際に、skk-henkan-list に #2 エントリと #3
-            ;; エントリがあれば、#2 もしくは #3 エントリのうち、より後方にある
-            ;; ものを消す。
+            ;; 1 $B7e$N?t;z$rJQ49$9$k:]$K!"skk-henkan-list $B$K #2 $B%(%s%H%j$H #3
+            ;; $B%(%s%H%j$,$"$l$P!"#2 $B$b$7$/$O #3 $B%(%s%H%j$N$&$A!"$h$j8eJ}$K$"$k
+            ;; $B$b$N$r>C$9!#
             (setq e3 (if (consp e1) (car e1) e1))
-            ;; e3 は "#2" のように数値変換を示す文字列のみとは限らないので、
-            ;; member は使えない。
+            ;; e3 $B$O "#2" $B$N$h$&$K?tCMJQ49$r<($9J8;zNs$N$_$H$O8B$i$J$$$N$G!"
+            ;; member $B$O;H$($J$$!#
             (cond ((string-match "#2" e3)
                    (setq type2 e1
                          index2 n1
@@ -457,14 +529,14 @@ TYPE は下記の通り。
                          head3 (substring e3 0 (match-beginning 0))
                          tail3 (substring e3 (match-end 0)))))))
         (when (and type2and3 type2 type3
-                   ;; 数値変換を示す文字列 "#[23]" の前後の文字列も同一のと
-                   ;; きのみ uniq を行う。
+                   ;; $B?tCMJQ49$r<($9J8;zNs "#[23]" $B$NA08e$NJ8;zNs$bF10l$N$H
+                   ;; $B$-$N$_ uniq $B$r9T$&!#
                    (string= head2 head3) (string= tail2 tail3))
           (if (> index2 index3)
-              ;; "#3" の方が前にある。
+              ;; "#3" $B$NJ}$,A0$K$"$k!#
               (setq skk-henkan-list (delq type2 skk-henkan-list))
-            ;; 変数 type[23] の値は、skk-henkan-list から直接抽出したも
-            ;; のだから delete でなく、delq で十分。
+            ;; $BJQ?t type[23] $B$NCM$O!"skk-henkan-list $B$+$iD>@\Cj=P$7$?$b$N
+            ;; $B$N$@$+$i delete $B$G$O$J$/!"delq $B$G==J,!#
             (setq skk-henkan-list (delq type3 skk-henkan-list))))))))
 
 ;;;###autoload

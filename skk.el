@@ -1828,8 +1828,8 @@ CHAR-LIST $B$N;D$j$HC)$l$J$/$J$C$?@aE@$NLZ$NAH$rJV$9!#(B"
   (when (skk-numeric-p)
     (skk-num-uniq)
     (skk-num-multiple-convert))
-  (when (and (featurep 'jisx0213)   ;Mule-UCS
-             skk-jisx0213-prohibit)
+  (when (and skk-jisx0213-prohibit
+             (featurep 'jisx0213))  ;Mule-UCS
     (skk-jisx0213-henkan-list-filter)))
 
 (defun skk-henkan-show-candidates ()
@@ -2097,9 +2097,10 @@ KEYS $B$H(B CANDIDATES $B$rAH$_9g$o$;$F#7$NG\?t8D$N8uJd72(B ($B8uJd?t$,(B
 
 (defun skk-henkan-candidate-list (candidates max)
   ;; CANDIDATES $B$N@hF,$N(B max $B8D$N$_$N%j%9%H$rJV$9!#(B
-  (let ((count 0) e sep note v)
+  (let ((count 0) e sep note v
+        (cell candidates))
     (while (> max count)
-      (setq e (nth count candidates))
+      (setq e (car cell))
       (setq sep  nil
             note nil)
       (when (and (skk-numeric-p) (consp e))
@@ -2171,7 +2172,8 @@ KEYS $B$H(B CANDIDATES $B$rAH$_9g$o$;$F#7$NG\?t8D$N8uJd72(B ($B8uJd?t$,(B
               count (1+ count)))
        (t
         ;; $B8uJd$,?T$-$?>l9g(B
-        (setq count max))))
+        (setq count max)))
+      (setq cell (cdr cell)))
     ;; $B8uJd$r=P8==g$K%=!<%H$7D>$7$FJV$9!#(B
     (nreverse v)))
 
@@ -3832,6 +3834,9 @@ If you want to restore the dictionary from your drive, try
         (sit-for 3)))))
 
 ;;;###autoload
+(defvar skk-jisyo-buffer-table (make-hash-table :test 'equal :size 13)
+  "Cache table from jisyo FILE spec to its buffer.")
+
 (defun skk-get-jisyo-buffer (file &optional nomsg)
   "FILE $B$r3+$$$F(B SKK $B<-=q%P%C%U%!$r:n$j!"%P%C%U%!$rJV$9!#(B
 $B<-=q%P%C%U%!$K$O(B `skk-jisyo-code' $B$,E,MQ$5$l$k(B (nil $B$G$"$l$P(B euc) $B$,!"(BFILE $B$K(B
@@ -3839,7 +3844,16 @@ If you want to restore the dictionary from your drive, try
 $B%*%W%7%g%J%k0z?t$N(B NOMSG $B$r;XDj$9$k$H%U%!%$%kFI$_9~$_$N:]$N%a%C%;!<%8$rI=<($7$J(B
 $B$$!#(B"
   (when file
-    (let* ((inhibit-quit t)
+    (let ((cached (gethash file skk-jisyo-buffer-table)))
+      (if (buffer-live-p cached)
+          cached
+        (let ((buf (skk-get-jisyo-buffer-1 file nomsg)))
+          (when buf
+            (puthash file buf skk-jisyo-buffer-table))
+          buf)))))
+
+(defun skk-get-jisyo-buffer-1 (file nomsg)
+  (let* ((inhibit-quit t)
            (code (skk-find-coding-system (cond ((consp file)
                                                 (cdr file))
                                                ((string= file (skk-jisyo))
@@ -3894,8 +3908,31 @@ If you want to restore the dictionary from your drive, try
                          "Inserting contents of %s ...done"
                          (file-name-nondirectory file)))
           (skk-setup-jisyo-buffer)
-          (set-buffer-modified-p nil)))
-      buf)))
+          (set-buffer-modified-p nil)
+          ;; The private jisyo is rewritten on every kakutei, so a search
+          ;; index would have to be rebuilt too often to pay off.  Only
+          ;; other (effectively static) dictionaries get one.
+          (setq-local skk-jisyo-index-file
+                      (unless (equal file (expand-file-name
+                                           (or (skk-jisyo) "")))
+                        file))))
+    buf))
+
+(defvar skk-search-prog-funcache (make-hash-table :test 'eq :size 31)
+  "Cache from each `skk-search-prog-list' element to a compiled thunk.")
+
+(defsubst skk-search-eval-prog (prog)
+  "Evaluate search program PROG.
+Each program form is byte-compiled once and cached, so the per-search
+cost is a funcall instead of a full `eval'."
+  (funcall
+   (or (gethash prog skk-search-prog-funcache)
+       (setf (gethash prog skk-search-prog-funcache)
+             (or (condition-case nil
+                     (let ((byte-compile-warnings nil))
+                       (byte-compile `(lambda () ,prog)))
+                   (error nil))
+                 (list 'lambda '() (list 'eval (list 'quote prog))))))))
 
 ;;;###autoload
 (defun skk-search ()
@@ -3914,10 +3951,10 @@ If you want to restore the dictionary from your drive, try
                     ;; $B?tCMJQ49;~$K!"Hs?tCMJQ49$bF1;~$K8!:w$7$F8uJd$K(B
                     ;; $B4^$a$k!#(B
                     (skk-nunion (let (skk-use-numeric-conversion)
-                                  (eval prog))
-                                (eval prog))
+                                  (skk-search-eval-prog prog))
+                                (skk-search-eval-prog prog))
                   (let (skk-use-numeric-conversion)
-                    (eval prog))))
+                    (skk-search-eval-prog prog))))
         (setq skk-current-search-prog-list (cdr skk-current-search-prog-list))))
     (setq skk-search-state (list skk-henkan-key prog l))
     l))
@@ -4015,6 +4052,55 @@ LIMIT $B$H(B NOMSG $B$O<-=q%5!<%P$,;HMQ$G$-$J$$$H$-$N$_M-8z!#(B
                                     midasi
                                     okurigana)))))
 
+(defun skk-jisyo-build-index ()
+  "Build a hash table mapping each entry key of the current jisyo buffer
+to the buffer position of the beginning of its line."
+  (let ((table (make-hash-table :test 'equal
+                                :size (min 65536
+                                           (max 64 (/ (point-max) 40))))))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((beg (point)))
+          (when (and (not (eq (char-after) ?\;))
+                     (search-forward " /" (line-end-position) t))
+            (let* ((key (buffer-substring-no-properties beg (- (point) 2)))
+                   (old (gethash key table)))
+              (puthash key (if old
+                               ;; keep ascending order of positions
+                               (if (consp old)
+                                   (nconc old (list beg))
+                                 (list old beg))
+                             beg)
+                       table))))
+        (forward-line 1)))
+    table))
+
+(defsubst skk-jisyo-index ()
+  "Return the search index of the current jisyo buffer, rebuilding it if
+the buffer has been modified since the index was built."
+  (when skk-jisyo-index-file
+    (if (and skk-jisyo-index
+             (= skk-jisyo-index-tick (buffer-chars-modified-tick)))
+        skk-jisyo-index
+      ;; Self-heal in case `skk-jisyo' has been changed after this buffer
+      ;; was created: never index the private jisyo.
+      (if (equal skk-jisyo-index-file (expand-file-name (or (skk-jisyo) "")))
+          (setq skk-jisyo-index-file nil
+                skk-jisyo-index nil)
+        (setq skk-jisyo-index-tick (buffer-chars-modified-tick)
+              skk-jisyo-index (skk-jisyo-build-index))))))
+
+(defun skk-jisyo-index-find (index key min max)
+  "Return the position of the entry for KEY in [MIN, MAX), or nil."
+  (let* ((pos (gethash key index))
+         best)
+    (when pos
+      (dolist (p (if (consp pos) pos (list pos)) best)
+        (when (and (<= min p) (< p max)
+                   (or (null best) (< p best)))
+          (setq best p))))))
+
 (defun skk-search-jisyo (okurigana limit &optional delete)
   "$B%+%l%s%H%P%C%U%!$r<-=q$H$7$F8!:w$9$k!#(B
 $B$3$N4X?t$NLa$jCM$O!"(B`skk-henkan-key' $B$r%-!<$H$7$F(B `skk-compute-henkan-lists' $B$r(B
@@ -4031,8 +4117,7 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
   ;;     (skk-search-jisyo "$B$/(B" 0)))
   ;; => (("$BF0(B") ("[$B$/(B") ("$BF0(B") ("]"))
 
-  (let ((key (concat "\n" skk-henkan-key " /"))
-        min max size p)
+  (let (min max pos index)
     (save-match-data
       ;; skk-okuri-ari-min $B$H(B skk-okuri-ari-max $B$O<-=q%P%C%U%!$N%m!<%+%kCM!#(B
       (if okurigana
@@ -4040,48 +4125,69 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
                 max skk-okuri-ari-max)
         (setq min skk-okuri-nasi-min
               max (point-max)))
-      (when (> limit 0)
-        ;; $BFsJ,C5:w(B
-        (let ((encoded-key (encode-coding-string skk-henkan-key
-                                                 'emacs-mule)))
-          (while (> (setq size (- max min)) limit)
-            (goto-char (+ min (/ size 2)))
-            (beginning-of-line)
-            (setq p (point))
-            (if (= p min)
-                (setq max min)    ; return
-              (let ((p-is-further
-                     ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
-                     (if okurigana
-                         (string< (encode-coding-string
-                                   (buffer-substring-no-properties
-                                    p (1- (search-forward  " ")))
-                                   'emacs-mule)
-                                  encoded-key)
-                       (string< encoded-key
-                                (encode-coding-string
-                                 (buffer-substring-no-properties
-                                  p (1- (search-forward " ")))
-                                 'emacs-mule)))))
-                (if p-is-further
-                    (setq max p)
-                  (setq min p)))))))
+      (when min
+        (setq index (skk-jisyo-index)))
+      (cond
+       (index
+        ;; The index covers every entry line of the buffer, so a miss
+        ;; means the entry is absent; no need to search.
+        (setq pos (skk-jisyo-index-find index skk-henkan-key min max))
+        (when pos
+          (goto-char pos)
+          (search-forward " /" (line-end-position))
+          (prog1
+              (skk-compute-henkan-lists okurigana)
+            (when delete
+              (beginning-of-line)
+              (delete-region (point)
+                             (progn
+                               (forward-line 1)
+                               (point)))))))
+       (t
+        (let ((key (concat "\n" skk-henkan-key " /"))
+              size p)
+          (when (> limit 0)
+            ;; $BFsJ,C5:w(B
+            (let ((encoded-key (encode-coding-string skk-henkan-key
+                                                     'emacs-mule)))
+              (while (> (setq size (- max min)) limit)
+                (goto-char (+ min (/ size 2)))
+                (beginning-of-line)
+                (setq p (point))
+                (if (= p min)
+                    (setq max min)    ; return
+                  (let ((p-is-further
+                         ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
+                         (if okurigana
+                             (string< (encode-coding-string
+                                       (buffer-substring-no-properties
+                                        p (1- (search-forward  " ")))
+                                       'emacs-mule)
+                                      encoded-key)
+                           (string< encoded-key
+                                    (encode-coding-string
+                                     (buffer-substring-no-properties
+                                      p (1- (search-forward " ")))
+                                     'emacs-mule)))))
+                    (if p-is-further
+                        (setq max p)
+                      (setq min p)))))))
 
-      (goto-char min)
-      ;; key $B$,8!:w3+;OCOE@$K$"$C$?>l9g$G$b8!:w2DG=$J$h$&$K0lJ8;zLa$k!#(B
-      ;; key $B$N@hF,ItJ,$K(B "\n" $B$,4^$^$l$F$$$k$3$H$KCm0U!#(B
-      (unless (bobp)
-        (backward-char 1))
-      ;; case-fold-search $B$O!"<-=q%P%C%U%!$G$O>o$K(B nil$B!#(B
-      (when (search-forward key max 'noerror)
-        (prog1
-            (skk-compute-henkan-lists okurigana)
-          (when delete
-            (beginning-of-line)
-            (delete-region (point)
-                           (progn
-                             (forward-line 1)
-                             (point)))))))))
+          (goto-char min)
+          ;; key $B$,8!:w3+;OCOE@$K$"$C$?>l9g$G$b8!:w2DG=$J$h$&$K0lJ8;zLa$k!#(B
+          ;; key $B$N@hF,ItJ,$K(B "\n" $B$,4^$^$l$F$$$k$3$H$KCm0U!#(B
+          (unless (bobp)
+            (backward-char 1))
+          ;; case-fold-search $B$O!"<-=q%P%C%U%!$G$O>o$K(B nil$B!#(B
+          (when (search-forward key max 'noerror)
+            (prog1
+                (skk-compute-henkan-lists okurigana)
+              (when delete
+                (beginning-of-line)
+                (delete-region (point)
+                               (progn
+                                 (forward-line 1)
+                                 (point))))))))))))
 
 (defun skk-select-words-from-list (list buffer midasi okurigana)
   "`skk-search-jisyo' $B$,JV$7$?8uJd%j%9%H$+$i8=:_MW5a$5$l$F$$$k8uJd$rA*$S$@$9!#(B"
@@ -4153,9 +4259,19 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
   ;; $B<h$j=P$9!#(B
   (cond
    ((not okurigana)
-    (list (split-string (buffer-substring-no-properties (point) (1- (line-end-position)))
-                        "/")
-          nil nil nil))
+    ;; Same as (split-string (buffer-substring-no-properties
+    ;;                        (point) (1- (line-end-position))) "/")
+    ;; but without building the intermediate string.
+    (let ((end (1- (line-end-position)))
+          (beg (point))
+          words)
+      (while (search-forward "/" end t)
+        (setq words (cons (buffer-substring-no-properties beg (1- (point)))
+                          words)
+              beg (point)))
+      (list (nreverse (cons (buffer-substring-no-properties beg end)
+                            words))
+            nil nil nil)))
    (t
     (save-match-data
       (let ((stage 1) q1 q2 q3 q4

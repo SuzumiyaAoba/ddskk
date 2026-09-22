@@ -2545,6 +2545,18 @@ Non-nil $B$G$"$l$P!"%+%l%s%H%P%C%U%!$G8=:_(B `skk-mode' $B$r5/F0$7$F$$$k$3$H$
   "SKK $B<-=q$NAw$j$J$7%(%s%H%j$N3+;OE@$r<($9%P%C%U%!%]%$%s%H!#(B
 `skk-jisyo' $B$N%P%C%U%!$G$O<-=q$N99?7$NI,MW$,$"$k$?$a$K%^!<%+!<$,BeF~$5$l$k!#(B")
 
+(skk-deflocalvar skk-jisyo-index nil
+  "Hash table mapping each entry key of a jisyo buffer to its line position.")
+
+(skk-deflocalvar skk-jisyo-index-tick -1
+  "`buffer-chars-modified-tick' at the time `skk-jisyo-index' was built.")
+
+(skk-deflocalvar skk-jisyo-index-file nil
+  "Non-nil when this jisyo buffer may use `skk-jisyo-index' for searching.
+Its value is the expanded file name the buffer was created from.  The
+private jisyo is excluded because it is rewritten on every kakutei, which
+would force an index rebuild on nearly every search.")
+
 ;; <$B$=$NB>(B>
 (skk-deflocalvar skk-mode-line nil
   "SKK $B$N%b!<%I$r<($9%b!<%I%i%$%s$NJ8;zNs!#(B
