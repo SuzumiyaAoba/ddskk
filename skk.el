@@ -2014,20 +2014,25 @@ KEYS $B$H(B CANDIDATES $B$rAH$_9g$o$;$F#7$NG\?t8D$N8uJd72(B ($B8uJd?t$,(B
          (workinglst (skk-henkan-candidate-list candidates max-candidates))
          str tooltip-str message-log-max)
     (when workinglst
-      (dotimes (i (length workinglst))
-        (let ((cand (if (consp (nth i workinglst))
-                        (cdr (nth i workinglst))
-                      (nth i workinglst)))
-              (key (concat (propertize (nth i keys) 'face
-                                       'skk-henkan-show-candidates-keys-face)
-                           ":")))
+      (let ((i 0)
+            (rest workinglst))
+        (while rest
+          (let* ((item (car rest))
+                 (cand (if (consp item)
+                           (cdr item)
+                         item))
+                 (key (concat (propertize (nth i keys) 'face
+                                          'skk-henkan-show-candidates-keys-face)
+                              ":")))
           (when (and (zerop (% i skk-henkan-number-to-display-candidates)) ; $B3FNs$N:G=i$N8uJd(B
                      (not (zerop i)))
             (setq str (concat str "\n")))
           (setq str (concat str
                             (if (zerop (% i skk-henkan-number-to-display-candidates)) "" "  ")
                             key cand)
-                tooltip-str (concat tooltip-str key cand "\n"))))
+                tooltip-str (concat tooltip-str key cand "\n"))
+          (setq rest (cdr rest)
+                i (1+ i)))))
       (setq str (concat str (propertize
                              (format "  [$B;D$j(B %d%s]"
                                      (- (length candidates)
@@ -3909,13 +3914,14 @@ If you want to restore the dictionary from your drive, try
                          (file-name-nondirectory file)))
           (skk-setup-jisyo-buffer)
           (set-buffer-modified-p nil)
-          ;; The private jisyo is rewritten on every kakutei, so a search
-          ;; index would have to be rebuilt too often to pay off.  Only
-          ;; other (effectively static) dictionaries get one.
-          (setq-local skk-jisyo-index-file
-                      (unless (equal file (expand-file-name
-                                           (or (skk-jisyo) "")))
-                        file))))
+          ;; The private jisyo is rewritten on every kakutei, so a
+          ;; position index would have to be rebuilt too often to pay
+          ;; off.  It gets a key-presence table instead, which dictionary
+          ;; updates can maintain in O(1).  Other (effectively static)
+          ;; dictionaries get a full position index.
+          (if (equal file (expand-file-name (or (skk-jisyo) "")))
+              (setq-local skk-jisyo-keyset-file file)
+            (setq-local skk-jisyo-index-file file))))
     buf))
 
 (defvar skk-search-prog-funcache (make-hash-table :test 'eq :size 31)
@@ -4101,6 +4107,122 @@ the buffer has been modified since the index was built."
                    (or (null best) (< p best)))
           (setq best p))))))
 
+(defun skk-jisyo-build-keyset ()
+  "Build `skk-jisyo-keyset' and `skk-jisyo-poshint' for the current
+jisyo buffer and return them as a cons (KEYSET . POSHINT)."
+  (let ((table (make-hash-table :test 'equal
+                                :size (min 65536
+                                           (max 64 (/ (point-max) 40)))))
+        (hint (make-hash-table :test 'equal
+                               :size (min 65536
+                                         (max 64 (/ (point-max) 40)))))
+        (z (point-max))
+        (ari-min skk-okuri-ari-min)
+        (ari-max skk-okuri-ari-max)
+        (nasi-min skk-okuri-nasi-min))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((beg (point)))
+          (when (and (not (eq (char-after) ?\;))
+                     (search-forward " /" (line-end-position) t)
+                     (or (and nasi-min (>= beg nasi-min))
+                         (and ari-min ari-max
+                              (>= beg ari-min) (< beg ari-max))))
+            (let* ((key (buffer-substring-no-properties beg (- (point) 2)))
+                   (cell (or (gethash key table)
+                             (puthash key (cons 0 0) table))))
+              (if (and nasi-min (>= beg nasi-min))
+                  (progn
+                    (setcar cell (1+ (car cell)))
+                    ;; lines are scanned newest-first, so the first
+                    ;; distance stored is that of the newest entry
+                    (or (gethash key hint)
+                        (puthash key (- z beg) hint)))
+                (setcdr cell (1+ (cdr cell)))))))
+        (forward-line 1)))
+    (cons table hint)))
+
+(defsubst skk-jisyo-keyset ()
+  "Return the key-presence table of the current private jisyo buffer.
+It is rebuilt if the buffer was modified outside of the update paths
+that keep it valid incrementally."
+  (when skk-jisyo-keyset-file
+    (if (and skk-jisyo-keyset
+             (= skk-jisyo-keyset-tick (buffer-chars-modified-tick)))
+        skk-jisyo-keyset
+      ;; Self-heal in case `skk-jisyo' no longer names this buffer's
+      ;; file: only the private jisyo gets a keyset.
+      (if (equal skk-jisyo-keyset-file (expand-file-name (or (skk-jisyo) "")))
+          (let ((built (skk-jisyo-build-keyset)))
+            (setq skk-jisyo-keyset-tick (buffer-chars-modified-tick)
+                  skk-jisyo-keyset (car built)
+                  skk-jisyo-poshint (cdr built))
+            skk-jisyo-keyset)
+        (setq skk-jisyo-keyset-file nil
+              skk-jisyo-keyset nil
+              skk-jisyo-poshint nil)))))
+
+(defsubst skk-jisyo-keyset-member-p (keyset key okurigana)
+  "Non-nil when KEYSET counts at least one entry for KEY in the section
+selected by OKURIGANA."
+  (let ((cell (gethash key keyset)))
+    (and cell
+         (> (if okurigana (cdr cell) (car cell))
+            0))))
+
+(defun skk-jisyo-keyset-add (key okurigana entry-beg)
+  "Record one more entry for KEY in the section selected by OKURIGANA,
+if the current buffer has a keyset.  ENTRY-BEG is the buffer position of
+the new entry's line, used to refresh its position hint."
+  (when skk-jisyo-keyset
+    (let ((cell (or (gethash key skk-jisyo-keyset)
+                    (puthash key (cons 0 0) skk-jisyo-keyset))))
+      (if okurigana
+          (setcdr cell (1+ (cdr cell)))
+        (setcar cell (1+ (car cell)))
+        ;; the new entry is the newest for KEY, hence the one a linear
+        ;; scan would find first; hint it
+        (when (and skk-jisyo-poshint entry-beg)
+          (puthash key (- (point-max) entry-beg) skk-jisyo-poshint))))
+    (setq skk-jisyo-keyset-tick (buffer-chars-modified-tick))))
+
+(defun skk-jisyo-keyset-delete (key okurigana)
+  "Record one less entry for KEY in the section selected by OKURIGANA,
+if the current buffer has a keyset."
+  (when skk-jisyo-keyset
+    (let ((cell (gethash key skk-jisyo-keyset)))
+      (when cell
+        (if okurigana
+            (setcdr cell (1- (cdr cell)))
+          (setcar cell (1- (car cell))))
+        (when (<= (+ (car cell) (cdr cell)) 0)
+          (remhash key skk-jisyo-keyset))))
+    (unless okurigana
+      ;; the hinted line may be the one just deleted; the next linear
+      ;; hit stores a fresh hint
+      (when skk-jisyo-poshint
+        (remhash key skk-jisyo-poshint)))
+    (setq skk-jisyo-keyset-tick (buffer-chars-modified-tick))))
+
+(defun skk-jisyo-poshint-find (key min)
+  "Return the line position of KEY's newest okuri-nasi entry recorded
+in `skk-jisyo-poshint', or nil when the hint is absent or stale."
+  (let ((pfe (gethash key skk-jisyo-poshint))
+        (len (length key))
+        pos)
+    (when (and pfe (> len 0))
+      (setq pos (- (point-max) pfe))
+      (and (<= min pos)
+           ;; KEY must sit at the line start and be followed by " /".
+           ;; Positions past `point-max' yield nil from `char-after'.
+           (eq (char-after pos) (aref key 0))
+           (eq (char-after (+ pos len)) ?\s)
+           (eq (char-after (+ pos len 1)) ?/)
+           (string= key
+                    (buffer-substring-no-properties pos (+ pos len)))
+           pos))))
+
 (defun skk-search-jisyo (okurigana limit &optional delete)
   "$B%+%l%s%H%P%C%U%!$r<-=q$H$7$F8!:w$9$k!#(B
 $B$3$N4X?t$NLa$jCM$O!"(B`skk-henkan-key' $B$r%-!<$H$7$F(B `skk-compute-henkan-lists' $B$r(B
@@ -4145,49 +4267,75 @@ DELETE $B$,(B non-nil $B$G$"$l$P(B `skk-henkan-key' $B$K%^%C%A$9$k%(%s%H%j$
                                (point)))))))
        (t
         (let ((key (concat "\n" skk-henkan-key " /"))
+              ;; The private jisyo is searched with LIMIT 0, i.e. a full
+              ;; linear scan, on every lookup.  Its keyset knows every
+              ;; entry key, so a miss can be answered in O(1).
+              (keyset (and min (skk-jisyo-keyset)))
               size p)
-          (when (> limit 0)
-            ;; $BFsJ,C5:w(B
-            (let ((encoded-key (encode-coding-string skk-henkan-key
-                                                     'emacs-mule)))
-              (while (> (setq size (- max min)) limit)
-                (goto-char (+ min (/ size 2)))
-                (beginning-of-line)
-                (setq p (point))
-                (if (= p min)
-                    (setq max min)    ; return
-                  (let ((p-is-further
-                         ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
-                         (if okurigana
-                             (string< (encode-coding-string
-                                       (buffer-substring-no-properties
-                                        p (1- (search-forward  " ")))
-                                       'emacs-mule)
-                                      encoded-key)
-                           (string< encoded-key
-                                    (encode-coding-string
-                                     (buffer-substring-no-properties
-                                      p (1- (search-forward " ")))
-                                     'emacs-mule)))))
-                    (if p-is-further
-                        (setq max p)
-                      (setq min p)))))))
+          (when (or (null keyset)
+                    (skk-jisyo-keyset-member-p keyset skk-henkan-key
+                                               okurigana))
+            (unless (and keyset
+                         ;; position hints exist only for okuri-nasi
+                         ;; entries of the private jisyo
+                         (not okurigana)
+                         skk-jisyo-poshint
+                         (setq pos (skk-jisyo-poshint-find
+                                    skk-henkan-key min)))
+              (when (> limit 0)
+                ;; $BFsJ,C5:w(B
+                (let ((encoded-key (encode-coding-string skk-henkan-key
+                                                         'emacs-mule)))
+                  (while (> (setq size (- max min)) limit)
+                    (goto-char (+ min (/ size 2)))
+                    (beginning-of-line)
+                    (setq p (point))
+                    (if (= p min)
+                        (setq max min)    ; return
+                      (let ((p-is-further
+                             ;; $BAw$j$"$j$J$i5U=g$KHf3S$9$k!#(B
+                             (if okurigana
+                                 (string< (encode-coding-string
+                                           (buffer-substring-no-properties
+                                            p (1- (search-forward  " ")))
+                                           'emacs-mule)
+                                          encoded-key)
+                               (string< encoded-key
+                                        (encode-coding-string
+                                         (buffer-substring-no-properties
+                                          p (1- (search-forward " ")))
+                                         'emacs-mule)))))
+                        (if p-is-further
+                            (setq max p)
+                          (setq min p)))))))
 
-          (goto-char min)
-          ;; key $B$,8!:w3+;OCOE@$K$"$C$?>l9g$G$b8!:w2DG=$J$h$&$K0lJ8;zLa$k!#(B
-          ;; key $B$N@hF,ItJ,$K(B "\n" $B$,4^$^$l$F$$$k$3$H$KCm0U!#(B
-          (unless (bobp)
-            (backward-char 1))
-          ;; case-fold-search $B$O!"<-=q%P%C%U%!$G$O>o$K(B nil$B!#(B
-          (when (search-forward key max 'noerror)
-            (prog1
-                (skk-compute-henkan-lists okurigana)
-              (when delete
-                (beginning-of-line)
-                (delete-region (point)
-                               (progn
-                                 (forward-line 1)
-                                 (point))))))))))))
+              (goto-char min)
+              ;; key $B$,8!:w3+;OCOE@$K$"$C$?>l9g$G$b8!:w2DG=$J$h$&$K0lJ8;zLa$k!#(B
+              ;; key $B$N@hF,ItJ,$K(B "\n" $B$,4^$^$l$F$$$k$3$H$KCm0U!#(B
+              (unless (bobp)
+                (backward-char 1))
+              ;; case-fold-search $B$O!"<-=q%P%C%U%!$G$O>o$K(B nil$B!#(B
+              (setq pos (and (search-forward key max 'noerror)
+                             (progn
+                               (beginning-of-line)
+                               (point))))
+              ;; a stale hint or none was corrected by this scan
+              (when (and pos skk-jisyo-poshint (not okurigana))
+                (puthash skk-henkan-key (- (point-max) pos)
+                         skk-jisyo-poshint)))
+            (when pos
+              (goto-char pos)
+              (search-forward " /" (line-end-position))
+              (prog1
+                  (skk-compute-henkan-lists okurigana)
+                (when delete
+                  (beginning-of-line)
+                  (delete-region (point)
+                                 (progn
+                                   (forward-line 1)
+                                   (point)))
+                  (skk-jisyo-keyset-delete skk-henkan-key
+                                           okurigana)))))))))))
 
 (defun skk-select-words-from-list (list buffer midasi okurigana)
   "`skk-search-jisyo' $B$,JV$7$?8uJd%j%9%H$+$i8=:_MW5a$5$l$F$$$k8uJd$rA*$S$@$9!#(B"
@@ -4430,7 +4578,8 @@ WORD $B$,6&M-<-=q$K$J$1$l$P!"8D?M<-=q$N<-=q%(%s%H%j$+$i:o=|$9$k!#(B"
   (let ((words1 (car   old-words-list))
         (words2 (nth 1 old-words-list))
         (words3 (nth 2 old-words-list))
-        (words4 (nth 3 old-words-list)))
+        (words4 (nth 3 old-words-list))
+        entry-beg)
     (cond ((not purge)
            ;; words1 $B$r99?7(B
            (if skk-jisyo-fix-order
@@ -4457,6 +4606,8 @@ WORD $B$,6&M-<-=q$K$J$1$l$P!"8D?M<-=q$N<-=q%(%s%H%j$+$i:o=|$9$k!#(B"
       (goto-char (if okurigana
                      skk-okuri-ari-min
                    skk-okuri-nasi-min))
+      ;; the entry's line starts right after the "\n" being inserted
+      (setq entry-beg (1+ (point)))
       (insert "\n" skk-henkan-key " /")
       ;; words1 -- $BA48uJd72(B ($BAw$j$J$7$N>l9g(B) $B!"$^$?$O(B
       ;;           $BA48uJd72$N4A;zItJ,(B ($BAw$j$"$j$N>l9g(B)
@@ -4525,7 +4676,12 @@ WORD $B$,6&M-<-=q$K$J$1$l$P!"8D?M<-=q$N<-=q%(%s%H%j$+$i:o=|$9$k!#(B"
         (when words4
           ;; words4 -- "]" + $BB>$NAw$j2>L>$r;H$&A44A;z8uJd(B
           ;; (words2 $B$N;D$j(B)$B!#(B
-          (insert (skk-update-jisyo-2 words4) "/"))))))
+          (insert (skk-update-jisyo-2 words4) "/"))))
+
+    ;; All inserts for this entry are done; record the new key so the
+    ;; keyset stays valid without a rebuild.
+    (when words1
+      (skk-jisyo-keyset-add skk-henkan-key okurigana entry-beg))))
 
 (defun skk-update-jisyo-2 (words)
   (mapconcat #'skk-quote-char

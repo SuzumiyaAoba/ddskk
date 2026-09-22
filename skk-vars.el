@@ -2557,6 +2557,29 @@ Its value is the expanded file name the buffer was created from.  The
 private jisyo is excluded because it is rewritten on every kakutei, which
 would force an index rebuild on nearly every search.")
 
+(skk-deflocalvar skk-jisyo-keyset nil
+  "Hash table counting the entry lines for each key of the private jisyo
+buffer, per section: each value is a cons (OKURI-NASI . OKURI-ARI).
+Unlike `skk-jisyo-index' no buffer positions are recorded, so dictionary
+updates keep it valid in O(1) instead of forcing a rebuild.")
+
+(skk-deflocalvar skk-jisyo-poshint nil
+  "Hash table mapping each entry key of the private jisyo buffer to the
+distance from the end of buffer to its newest okuri-nasi entry line.
+Insertions only ever happen at section min points, i.e. before every
+existing entry, so they never change these values; deletions can make a
+hint stale, which lookups detect and correct by falling back to a linear
+scan.")
+
+(skk-deflocalvar skk-jisyo-keyset-tick -1
+  "`buffer-chars-modified-tick' at the time `skk-jisyo-keyset' was built
+or last updated incrementally.")
+
+(skk-deflocalvar skk-jisyo-keyset-file nil
+  "Non-nil when this jisyo buffer is the private jisyo and may use
+`skk-jisyo-keyset' to detect absent entry keys in O(1).
+Its value is the expanded file name the buffer was created from.")
+
 ;; <その他>
 (skk-deflocalvar skk-mode-line nil
   "SKK のモードを示すモードラインの文字列。
